@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# termg runtime config (do not commit personal settings)
+# ~/.config/termg/settings.json lives in the user's home, not the repo,
+# but ignore any stray copy here:
+settings.json

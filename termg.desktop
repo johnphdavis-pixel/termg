@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=termg
+GenericName=Terminal
+Comment=Tabbed & tiling terminal with command history, file tree and a script runner
+Exec=termg
+Icon=termg
+Terminal=false
+Categories=System;TerminalEmulator;Utility;
+Keywords=terminal;shell;console;command;tiling;tabs;
+StartupNotify=true

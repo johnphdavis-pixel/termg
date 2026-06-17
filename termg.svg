@@ -1,0 +1,32 @@
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#222b3a"/>
+      <stop offset="1" stop-color="#10141d"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1d212a"/>
+      <stop offset="1" stop-color="#161a22"/>
+    </linearGradient>
+  </defs>
+
+  <!-- app tile -->
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#bg)"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="53.5" fill="none"
+        stroke="#5aa7ff" stroke-opacity="0.25" stroke-width="1.5"/>
+
+  <!-- terminal screen -->
+  <rect x="36" y="48" width="184" height="160" rx="18" fill="url(#screen)"
+        stroke="#2b303b" stroke-width="2"/>
+
+  <!-- title dots -->
+  <circle cx="58" cy="68" r="4.5" fill="#e06c75"/>
+  <circle cx="74" cy="68" r="4.5" fill="#e5c07b"/>
+  <circle cx="90" cy="68" r="4.5" fill="#98c379"/>
+
+  <!-- big G on the screen, plus a cursor block (terminal vibe) -->
+  <text x="118" y="172" text-anchor="middle"
+        font-family="DejaVu Sans Mono, monospace" font-weight="bold"
+        font-size="132" fill="#98c379">G</text>
+  <rect x="170" y="92" width="22" height="64" rx="3" fill="#5aa7ff"/>
+</svg>
