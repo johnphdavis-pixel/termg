@@ -4,6 +4,41 @@ All notable changes to termg are documented here. The format is loosely based
 on [Keep a Changelog](https://keepachangelog.com/), and the project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.2]
+
+### Added
+- A **dropdown caret next to the Cast button** opens the target chooser directly
+  (no need to know about right-click).
+
+## [0.4.1]
+
+### Changed
+- **Cast (broadcast) now works in both tabbed and tiled view**, and you can
+  **choose which tabs/tiles receive it**. Right-click the Cast button for a
+  checklist (plus “all” / “none”). Target tabs are tinted orange and target
+  tiles get the orange border; the tab you're typing in is the source and isn't
+  marked. New tabs opened while casting join automatically.
+
+## [0.4.0]
+
+### Added
+- **Command history is remembered between sessions.** It's saved to
+  `~/.config/termg/history.jsonl` and reloaded on launch. Turn it off with
+  “Remember command history between sessions” in Settings, or wipe it via the
+  history panel's right-click → “Clear history…”.
+
+### Changed
+- The history panel is now a single **global** log across all tabs (previously
+  per-tab). Commands from earlier days show their date alongside the time.
+
+## [0.3.2]
+
+### Fixed
+- **Session restore now reopens each tab in its real working directory.** It
+  previously depended on the shell emitting an OSC 7 escape to track the
+  directory, so tabs frequently came back in your home folder. The directory is
+  now read straight from the shell process (`/proc`), which always works.
+
 ## [0.3.1]
 
 ### Fixed

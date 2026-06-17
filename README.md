@@ -24,14 +24,19 @@ every tab is a genuine PTY-backed shell.
   tab, Edit, Open in file manager, **Insert path into terminal**, and Copy path.
   It keeps your open folders when you refresh and **auto-refreshes when a tab
   changes directory**.
-- **Command history** (resizable, searchable) — filter by substring or `.*`
-  regex; double-click to re-run in the current tab, right-click to run in
-  this/new tab, copy, or save (`.sh` with shebang + exec bit, or `.txt`).
+- **Command history** (resizable, searchable, **remembered between sessions**)
+  — a global log of the commands you run, saved to
+  `~/.config/termg/history.jsonl` and reloaded on launch. Filter by substring or
+  `.*` regex; double-click to re-run, right-click to run in this/new tab, copy,
+  save (`.sh` with shebang + exec bit, or `.txt`), or clear. Persistence can be
+  turned off in Settings.
 - **Clickable URLs** — Ctrl+click links in the output to open them.
 - **Clipboard history** — a panel that remembers what you've copied; double-click to copy it again (in-memory only, while the panel is open).
 - **Find in scrollback** — Ctrl+Shift+F to search the terminal output.
-- **Broadcast input** — in tiled view, mirror your typing to every pane
-  (toolbar “Cast”), with an orange border on each pane while it's on.
+- **Broadcast input** — mirror your typing to other tabs/tiles (toolbar
+  “Cast”), in **both tabbed and tiled** view. Click the **caret next to Cast**
+  (or right-click it) to choose which tabs receive it; targets are highlighted
+  orange.
 - **Session restore** — reopens your tabs, working directories and layout on
   launch (optional, in Settings).
 - **Copy / paste tools** — copy the selection, the visible screen, or the whole

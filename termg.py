@@ -59,7 +59,7 @@ gi.require_version("Vte", "2.91")
 from gi.repository import Gtk, Gdk, GLib, Pango, Vte  # noqa: E402
 
 APP_NAME = "termg"
-__version__ = "0.3.1"
+__version__ = "0.4.2"
 
 # URLs in terminal output, for Ctrl+click to open. PCRE2 syntax (compiled by VTE).
 URL_PATTERN = (r"(https?|ftp|file)://[^\s<>\"'`|()\[\]{}]+"
@@ -113,6 +113,7 @@ CONFIG_DIR = os.path.join(
                    os.path.join(os.path.expanduser("~"), ".config")),
     "termg")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "settings.json")
+HISTORY_FILE = os.path.join(CONFIG_DIR, "history.jsonl")
 
 DEFAULT_SETTINGS = {
     "theme": "dark",
@@ -122,6 +123,7 @@ DEFAULT_SETTINGS = {
     "screenshot_cmd": "",        # blank = auto (built-in, then detect a tool)
     "font_scale": 1.0,           # remembered terminal font zoom
     "restore_session": True,     # reopen last session's tabs/layout on launch
+    "persist_history": True,      # remember command history between sessions
     "redact_secrets": False,     # scrub inline secrets from history (opt-in)
     "session": None,             # snapshot of last session (tabs + layout)
     "show_tree": False,          # file-tree panel open on launch
@@ -223,6 +225,10 @@ class Termg:
         self._switching = False
         self._tabbar_updating = False
         self._tree_refresh_pending = False   # debounce for auto-refresh on cd
+        # global, cross-session command history (persisted to HISTORY_FILE)
+        self.cmd_history = []
+        self._history_cap = 5000             # entries kept in memory / the panel
+        self._history_file_max = 12000       # compact the file above this
         # clipboard history (in-memory only; never written to disk)
         self._clip_capturing = False
         self._clip_last = None
@@ -232,8 +238,9 @@ class Termg:
         self._tree_width = int(self.settings.get("tree_width", 300) or 300)
         self._history_width = int(self.settings.get("history_width", 380) or 380)
         self._font_scale = float(self.settings.get("font_scale", 1.0) or 1.0)
-        self.broadcast = False        # mirror typing to all tiles (tiled mode)
+        self.broadcast = False        # mirror typing to selected tabs/tiles
         self._broadcasting = False    # re-entrancy guard for broadcast
+        self.cast_targets = set()     # sessions that receive broadcast input
 
         self.css_provider = Gtk.CssProvider()
         Gtk.StyleContext.add_provider_for_screen(
@@ -251,6 +258,7 @@ class Termg:
         except Exception:
             self._clip = None
         # open the saved session's tabs/layout, or a single fresh tab
+        self._load_history()      # populate the history panel from past sessions
         self._open_initial_tabs()
         self.window.show_all()
         # Panels start hidden; restore the saved open/closed state (and width)
@@ -368,9 +376,16 @@ class Termg:
             lambda *_: self.toolbar_run_sudo())
         sep()
         self.broadcast_toggle = tog("send-to-symbolic", "Cast",
-                                    "Broadcast typing to every tile "
-                                    "(only acts in tiled view with 2+ panes)",
+                                    "Broadcast typing to the chosen tabs/tiles "
+                                    "(click the caret to pick which)",
                                     self.on_toggle_broadcast)
+        self.broadcast_toggle.connect("button-press-event",
+                                      self._on_cast_button_press)
+        self.cast_menu_btn = make_button("pan-down-symbolic", "",
+                                         "Choose which tabs/tiles to cast to")
+        self.cast_menu_btn.get_style_context().add_class("tt-caret")
+        self.cast_menu_btn.connect("clicked", lambda *_: self._open_cast_menu())
+        left.pack_start(self.cast_menu_btn, False, False, 0)
         sep()
         btn("edit-copy-symbolic", "Copy sel",
             "Copy the highlighted selection (what you dragged over)",
@@ -873,6 +888,8 @@ class Termg:
         .tt-frame { border: 2px solid transparent; background-color: %(bg)s; }
         .tt-frame.active { border: 2px solid %(accent)s; }
         .tt-frame.tt-broadcast { border: 2px solid #e0894e; }
+        .tt-tab.tt-cast { background-color: rgba(224, 137, 78, 0.30); }
+        .tt-caret { padding-left: 0; padding-right: 0; min-width: 16px; }
         .tt-header { background-color: %(header_bg)s; padding: 2px 4px;
                      border-bottom: 1px solid %(border)s; }
 
@@ -1018,6 +1035,8 @@ class Termg:
 
         self.sessions.append(s)
         self.active_session = s
+        if self.broadcast:
+            self.cast_targets.add(s)   # new tabs join an active broadcast
         self._spawn_shell(term, s, s.cwd)
         self.rebuild_layout()
         self._refresh_tab_bar()
@@ -1230,10 +1249,22 @@ class Termg:
         self._save_session()
         Gtk.main_quit()
 
+    def _session_cwd(self, s):
+        """The tab's working directory for restore. Read the shell's live cwd
+        from /proc (works regardless of the shell's config / OSC 7 support);
+        fall back to the OSC 7 value, if any."""
+        pid = s.shell_pid
+        if pid:
+            try:
+                return os.readlink("/proc/%d/cwd" % pid)
+            except OSError:
+                pass
+        return s.cwd
+
     def _session_snapshot(self):
         """Capture the current tabs and layout for restoring next launch."""
         home = os.path.expanduser("~")
-        tabs = [{"cwd": s.cwd or home,
+        tabs = [{"cwd": self._session_cwd(s) or home,
                  "name": s.custom_name,
                  "pinned": bool(s.pinned)} for s in self.sessions]
         try:
@@ -1394,6 +1425,7 @@ class Termg:
             return
         idx = self.sessions.index(s)
         self.sessions.remove(s)
+        self.cast_targets.discard(s)
         p = s.frame.get_parent()
         if p is not None:
             p.remove(s.frame)
@@ -1420,6 +1452,7 @@ class Termg:
         """Sync the active-tab highlight, focus border and notebook page to the active session."""
         self._update_active_borders()
         self._update_tabbar_active()
+        self._update_cast_visuals()
         if (not self.tiled and isinstance(self.layout_widget, Gtk.Notebook)
                 and self.active_session in self.sessions):
             idx = self.sessions.index(self.active_session)
@@ -1434,17 +1467,25 @@ class Termg:
                 self._switching = False
 
     def _update_active_borders(self):
-        casting = self.broadcast and self.tiled and len(self.sessions) > 1
         for s in self.sessions:
             ctx = s.frame.get_style_context()
             if s is self.active_session:
                 ctx.add_class("active")
             else:
                 ctx.remove_class("active")
-            if casting:
-                ctx.add_class("tt-broadcast")
-            else:
-                ctx.remove_class("tt-broadcast")
+
+    def _update_cast_visuals(self):
+        """Mark the tabs/tiles that will receive broadcast input (orange). The
+        active pane is the source, so it's never marked as a target."""
+        casting = self.broadcast and len(self.sessions) > 1
+        for s in self.sessions:
+            target = (casting and s in self.cast_targets
+                      and s is not self.active_session)
+            fctx = s.frame.get_style_context()
+            (fctx.add_class if target else fctx.remove_class)("tt-broadcast")
+            if s.tab_button is not None:
+                tctx = s.tab_button.get_style_context()
+                (tctx.add_class if target else tctx.remove_class)("tt-cast")
 
     # ---- signal handlers -------------------------------------------------
     def on_switch_page(self, notebook, page, page_num):
@@ -1501,11 +1542,11 @@ class Termg:
         """Reconstruct entered command lines from the input stream, while keeping
         passwords out of the history. The suppress decision is made once when a
         line begins (cheap, and avoids re-scanning the screen per keystroke)."""
-        # Broadcast: mirror this input to every other tile (tiled view only).
-        # Only the *active* pane broadcasts -- mirrored input lands in inactive
-        # panes, which therefore never echo it back (no feedback loop). The
+        # Broadcast: mirror this input to the chosen target tabs/tiles. Works in
+        # both tabbed and tiled view. Only the *active* pane broadcasts, so
+        # mirrored input (delivered to inactive panes) never echoes back; the
         # re-entrancy guard is a second safety net.
-        if (self.broadcast and not self._broadcasting and self.tiled
+        if (self.broadcast and not self._broadcasting
                 and len(self.sessions) > 1
                 and self.active_session is not None
                 and term is self.active_session.terminal):
@@ -1513,7 +1554,7 @@ class Termg:
             try:
                 data = text.encode("utf-8", "replace")
                 for other in self.sessions:
-                    if other.terminal is not term:
+                    if other is not self.active_session and other in self.cast_targets:
                         try:
                             other.terminal.feed_child(data)
                         except Exception:
@@ -1574,10 +1615,75 @@ class Termg:
         if self.settings.get("redact_secrets"):
             cmd = self._redact_secrets(cmd)
         ts = datetime.datetime.now()
-        s.history.append((ts, cmd))
-        if s is self.active_session:
-            self.history_store.append([ts.strftime(TIME_FMT), cmd])
-            self._scroll_history_to_end()
+        self.cmd_history.append((ts, cmd))
+        # cap memory + the panel together
+        over = len(self.cmd_history) - self._history_cap
+        if over > 0:
+            del self.cmd_history[:over]
+            for _ in range(over):
+                it = self.history_store.get_iter_first()
+                if it is None:
+                    break
+                self.history_store.remove(it)
+        self.history_store.append([self._fmt_history_time(ts), cmd])
+        self._scroll_history_to_end()
+        self._persist_command(ts, cmd)
+
+    def _fmt_history_time(self, dt):
+        """Time of day for today's commands; date + time for older ones."""
+        if dt.date() == datetime.date.today():
+            return dt.strftime(TIME_FMT)
+        return dt.strftime("%d %b %H:%M")
+
+    def _persist_command(self, ts, cmd):
+        if not self.settings.get("persist_history", True):
+            return
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            with open(HISTORY_FILE, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"t": ts.isoformat(timespec="seconds"),
+                                     "c": cmd}, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    def _load_history(self):
+        """Load past commands from HISTORY_FILE into the panel, compacting the
+        file if it has grown large."""
+        self.cmd_history = []
+        if not self.settings.get("persist_history", True):
+            return
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            return
+        if len(lines) > self._history_file_max:
+            lines = lines[-self._history_cap:]
+            try:
+                with open(HISTORY_FILE, "w", encoding="utf-8") as fh:
+                    fh.write("\n".join(lines) + ("\n" if lines else ""))
+            except OSError:
+                pass
+        for ln in lines[-self._history_cap:]:
+            try:
+                d = json.loads(ln)
+                ts = datetime.datetime.fromisoformat(d["t"])
+                cmd = d["c"]
+            except (ValueError, KeyError, TypeError):
+                continue
+            self.cmd_history.append((ts, cmd))
+            self.history_store.append([self._fmt_history_time(ts), cmd])
+
+    def _clear_history(self):
+        """Clear the history panel and the persisted history file."""
+        self.cmd_history = []
+        self.history_store.clear()
+        try:
+            if os.path.exists(HISTORY_FILE):
+                os.remove(HISTORY_FILE)
+        except OSError:
+            pass
+        self.status("Command history cleared.")
 
     def _redact_secrets(self, cmd):
         """Mask secret values that appear inline on a command line. Opt-in
@@ -1738,17 +1844,83 @@ class Termg:
         self.status("Tiled layout on." if self.tiled else "Tabbed layout on.")
 
     def on_toggle_broadcast(self, btn):
-        """Toolbar: mirror typing to every tile. Only acts in tiled view with
-        2+ panes; every pane shows an orange border while it's on."""
+        """Mirror typing from the active tab to the chosen tabs/tiles. Works in
+        both tabbed and tiled view; right-click the Cast button to pick targets."""
         self.broadcast = btn.get_active()
+        if self.broadcast:
+            self.cast_targets &= set(self.sessions)      # drop any stale ones
+            if not self.cast_targets:
+                self.cast_targets = set(self.sessions)   # default: every tab
         self.update_active_visual()
         if not self.broadcast:
             self.status("Broadcast off.")
-        elif self.tiled and len(self.sessions) > 1:
-            self.status("Broadcast ON \u2014 typing goes to all %d tiles."
-                        % len(self.sessions))
         else:
-            self.status("Broadcast armed \u2014 it acts once you tile 2+ panes.")
+            self._cast_status()
+
+    def _cast_status(self):
+        if not self.broadcast:
+            return
+        n = sum(1 for t in self.cast_targets
+                if t in self.sessions and t is not self.active_session)
+        if n == 0:
+            self.status("Broadcast on, but no other tabs are selected \u2014 "
+                        "right-click Cast to choose targets.")
+        else:
+            self.status("Broadcasting to %d other tab%s \u2014 right-click Cast "
+                        "to change." % (n, "" if n == 1 else "s"))
+
+    def _on_cast_button_press(self, widget, event):
+        if event.button == 3:                 # right-click -> choose targets
+            self._build_cast_menu().popup_at_pointer(event)
+            return True
+        return False
+
+    def _open_cast_menu(self):
+        """Open the cast-target chooser from the dropdown caret."""
+        menu = self._build_cast_menu()
+        try:
+            menu.popup_at_widget(self.cast_menu_btn,
+                                 Gdk.Gravity.SOUTH_WEST,
+                                 Gdk.Gravity.NORTH_WEST, None)
+        except Exception:
+            menu.popup(None, None, None, None, 0, Gtk.get_current_event_time())
+
+    def _build_cast_menu(self):
+        menu = Gtk.Menu()
+        menu.get_style_context().add_class("tt-root")
+
+        def plain(label, cb):
+            mi = Gtk.MenuItem(label=label)
+            mi.connect("activate", lambda *_: cb())
+            menu.append(mi)
+
+        plain("Cast to all tabs", lambda: self._cast_set_all(True))
+        plain("Cast to none", lambda: self._cast_set_all(False))
+        menu.append(Gtk.SeparatorMenuItem())
+        for s in self.sessions:
+            label = self._display_name(s)
+            if s is self.active_session:
+                label += "  (this tab)"
+            ci = Gtk.CheckMenuItem(label=label)
+            ci.set_active(s in self.cast_targets)
+            ci.connect("toggled",
+                       lambda w, ss=s: self._cast_toggle_target(ss, w.get_active()))
+            menu.append(ci)
+        menu.show_all()
+        return menu
+
+    def _cast_set_all(self, on):
+        self.cast_targets = set(self.sessions) if on else set()
+        self.update_active_visual()
+        self._cast_status()
+
+    def _cast_toggle_target(self, s, on):
+        if on:
+            self.cast_targets.add(s)
+        else:
+            self.cast_targets.discard(s)
+        self.update_active_visual()
+        self._cast_status()
 
     def on_toggle_history(self, btn):
         """Toolbar: show or hide the command-history panel."""
@@ -2048,12 +2220,10 @@ class Termg:
 
     # ---- history panel actions ------------------------------------------
     def refresh_history_panel(self):
-        """Reload the history list from the active session's recorded commands."""
+        """Rebuild the history list from the global (cross-session) history."""
         self.history_store.clear()
-        if self.active_session is None:
-            return
-        for ts, cmd in self.active_session.history:
-            self.history_store.append([ts.strftime(TIME_FMT), cmd])
+        for ts, cmd in self.cmd_history:
+            self.history_store.append([self._fmt_history_time(ts), cmd])
         self._scroll_history_to_end()
 
     def _scroll_history_to_end(self):
@@ -2153,6 +2323,20 @@ class Termg:
         self._popup_history_menu(event)
         return True
 
+    def _confirm_clear_history(self):
+        dlg = Gtk.MessageDialog(
+            transient_for=self.window, modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text="Clear command history?")
+        dlg.format_secondary_text(
+            "This removes every command from the panel and deletes the saved "
+            "history file. It cannot be undone.")
+        resp = dlg.run()
+        dlg.destroy()
+        if resp == Gtk.ResponseType.OK:
+            self._clear_history()
+
     def _popup_history_menu(self, event):
         cmds = self._selected_commands()
         n = len(cmds)
@@ -2173,6 +2357,8 @@ class Termg:
         item("Copy" if n == 1 else "Copy %d command%s" % (n, many),
              self.history_copy_selected)
         item("Save\u2026", self.history_save)
+        menu.append(Gtk.SeparatorMenuItem())
+        item("Clear history\u2026", self._confirm_clear_history)
         menu.show_all()
         try:
             menu.popup_at_pointer(event)
@@ -2794,6 +2980,10 @@ class Termg:
             label="Reopen last session's tabs and layout on launch")
         restore_chk.set_active(self.settings.get("restore_session", True))
         indent(restore_chk)
+        persist_chk = Gtk.CheckButton(
+            label="Remember command history between sessions")
+        persist_chk.set_active(self.settings.get("persist_history", True))
+        indent(persist_chk)
         redact_chk = Gtk.CheckButton(
             label="Redact inline secrets from history (passwords, tokens\u2026)")
         redact_chk.set_active(self.settings.get("redact_secrets", False))
@@ -2829,6 +3019,7 @@ class Termg:
         self.settings["show_hidden"] = hidden_chk.get_active()
         self.settings["screenshot_cmd"] = shot_entry.get_text().strip()
         self.settings["restore_session"] = restore_chk.get_active()
+        self.settings["persist_history"] = persist_chk.get_active()
         self.settings["redact_secrets"] = redact_chk.get_active()
         self._save_settings()
         if getattr(self, "_tree_populated", False):
