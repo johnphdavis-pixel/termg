@@ -21,7 +21,9 @@ every tab is a genuine PTY-backed shell.
   rename, right-click to rename / pin / close. Pinned tabs hide their close button.
 - **File-tree browser** (resizable) — double-click a folder to `cd` the active
   tab there, a file to edit it; right-click for Run, Run with sudo, Run in new
-  tab, Run with sudo in new tab, Edit, Open in file manager, Copy path.
+  tab, Edit, Open in file manager, **Insert path into terminal**, and Copy path.
+  It keeps your open folders when you refresh and **auto-refreshes when a tab
+  changes directory**.
 - **Command history** (resizable, searchable) — filter by substring or `.*`
   regex; double-click to re-run in the current tab, right-click to run in
   this/new tab, copy, or save (`.sh` with shebang + exec bit, or `.txt`).
@@ -43,7 +45,25 @@ every tab is a genuine PTY-backed shell.
 - **Screenshots** — built-in on X11, automatic external-tool fallback on
   Wayland, or your own command.
 
+![Tiled panes with broadcast input and the clipboard panel](docs/tiled.png)
+
+*Tiled view: the same keystrokes broadcast to every pane (orange border), with the clipboard-history panel on the right.*
+
 ## Install
+
+### Debian / Ubuntu / Mint — `.deb`
+
+Download the latest `termg_*_all.deb` from the
+[Releases](https://github.com/johnphdavis-pixel/termg/releases) page, then:
+
+```bash
+sudo apt install ./termg_0.3.1_all.deb
+```
+
+This adds `termg` to your applications menu and your PATH (`sudo apt remove termg`
+to uninstall). apt pulls in the dependencies automatically.
+
+### From source — any distro
 
 ```bash
 git clone https://github.com/johnphdavis-pixel/termg.git
@@ -78,11 +98,12 @@ Mint-specific. Install the bindings for your distro:
 
 - **Tile / tab toggle** is top-left; the **＋ new-tab** button is at the end of
   the tab bar. Switch tabs with **Ctrl+Page Up/Down**, new tab **Ctrl+Shift+T**,
-  close **Ctrl+Shift+W**. Zoom font with **Ctrl + / − / 0**.
-- **Toolbar** (each button is labelled): Tile · Files · History ‖ Edit · Run ·
-  Sudo ‖ Copy sel · Copy view · Copy all · Save ‖ Paste · Per line ‖ Shot, with
-  Settings pinned on the right. Edit/Run/Sudo act on the file-tree selection, or
-  ask you to pick a file.
+  close **Ctrl+Shift+W**. Find in scrollback **Ctrl+Shift+F**. Zoom font with
+  **Ctrl + / − / 0**.
+- **Toolbar** (each button is labelled): Tile · Files · History · Clipboard ‖
+  Edit · Run · Sudo ‖ Cast ‖ Copy sel · Copy view · Copy all · Save ‖ Paste ·
+  Per line ‖ Shot, with Settings pinned on the right. Edit/Run/Sudo act on the
+  file-tree selection, or ask you to pick a file.
 - **Settings** (gear) holds the light/dark theme switch, your editor (default
   `nano`, with presets), the hidden-files toggle, and an optional custom
   screenshot command. Settings persist to `~/.config/termg/settings.json`.
